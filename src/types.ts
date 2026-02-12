@@ -2,18 +2,21 @@
 
 export interface Block {
   id: string;
+  number: number;
   x: number;
   y: number;
   reliability: number;
 }
 
-export type ConnectionType = 'sequential' | 'parallel' | 'reserve' | null;
-
 export interface Connection {
-  from: string;
-  to: string;
-  type: ConnectionType;
+  id: string;
+  fromBlockId: string;
+  toBlockId: string;
+  fromSide: "left" | "right"; // Сторона первого блока
+  toSide: "left" | "right"; // Сторона второго блока
 }
+
+export type ConnectionType = "sequential" | "parallel" | "reserve" | null;
 
 export interface SystemCalculations {
   processorCount: number;

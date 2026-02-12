@@ -1,34 +1,55 @@
 import React, { useState, useRef } from "react";
-import { Block } from "../types";
-import { findConnections } from "../utils";
+import { Block, Connection } from "../types";
 
 interface GridCanvasProps {
   blocks: Block[];
+  connections: Connection[];
   selectedBlockId: string | null;
   onSelectBlock: (id: string | null) => void;
   onUpdateBlock: (id: string, updates: Partial<Block>) => void;
   onAddBlock: () => void;
   onDeleteBlock: () => void;
+  onAddConnection: (connection: Connection) => void;
+  onDeleteConnection: (id: string) => void;
 }
 
 const CELL_SIZE = 40; // размер одной клетки
 const BLOCK_SIZE = 2; // блок занимает 2x2 клетки
 
+interface ConnectionPoint {
+  blockId: string;
+  side: "left" | "right";
+}
+
 const GridCanvas: React.FC<GridCanvasProps> = ({
   blocks,
+  connections,
   selectedBlockId,
   onSelectBlock,
   onUpdateBlock,
   onAddBlock,
   onDeleteBlock,
+  onAddConnection,
+  onDeleteConnection,
 }) => {
   const [draggingBlockId, setDraggingBlockId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [connectingFrom, setConnectingFrom] = useState<ConnectionPoint | null>(
+    null,
+  );
+  const [selectedConnectionId, setSelectedConnectionId] = useState<
+    string | null
+  >(null);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const gridRef = useRef<HTMLDivElement>(null);
 
-  const connections = findConnections(blocks);
-
   const handleMouseDown = (e: React.MouseEvent, blockId: string) => {
+    // Проверяем, не клик ли по точке соединения
+    const target = e.target as HTMLElement;
+    if (target.classList.contains("connection-point")) {
+      return; // Не начинаем перетаскивание, если кликнули по точке
+    }
+
     e.stopPropagation();
     onSelectBlock(blockId);
     setDraggingBlockId(blockId);
@@ -49,6 +70,13 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (gridRef.current) {
+      const rect = gridRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      setMousePos({ x: mouseX, y: mouseY });
+    }
+
     if (draggingBlockId && gridRef.current) {
       const rect = gridRef.current.getBoundingClientRect();
       const mouseX = e.clientX - rect.left - dragOffset.x;
@@ -69,110 +97,277 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
   const handleCanvasClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       onSelectBlock(null);
+      setSelectedConnectionId(null);
+      // Сброс создания связи при клике в пустое место
+      if (connectingFrom) {
+        setConnectingFrom(null);
+      }
     }
   };
 
-  // Функция для отрисовки линии между двумя блоками
-  const renderConnection = (from: Block, to: Block, type: string) => {
-    // Центр блока = позиция + половина размера блока
-    const fromCenterX = (from.x + BLOCK_SIZE / 2) * CELL_SIZE;
-    const fromCenterY = (from.y + BLOCK_SIZE / 2) * CELL_SIZE;
-    const toCenterX = (to.x + BLOCK_SIZE / 2) * CELL_SIZE;
-    const toCenterY = (to.y + BLOCK_SIZE / 2) * CELL_SIZE;
+  const handleConnectionPointClick = (
+    e: React.MouseEvent,
+    blockId: string,
+    side: "left" | "right",
+  ) => {
+    e.stopPropagation();
 
-    const color = 
-      type === 'sequential' ? '#4ec9b0' :
-      type === 'parallel' ? '#9b59b6' :
-      type === 'reserve' ? '#f39c12' : '#666';
+    if (!connectingFrom) {
+      // Начинаем создание связи
+      setConnectingFrom({ blockId, side });
+    } else {
+      // Проверяем, не та же ли это точка или точка того же блока
+      if (connectingFrom.blockId === blockId) {
+        // Нельзя соединять блок с самим собой
+        setConnectingFrom(null);
+        return;
+      }
 
-    const strokeWidth = type === 'sequential' ? 3 : 2;
-    const dashArray = 
-      type === 'parallel' ? '5,5' :
-      type === 'reserve' ? '2,4' : 'none';
+      // Проверяем, не существует ли уже такая связь
+      const existingConnection = connections.find(
+        (conn) =>
+          (conn.fromBlockId === connectingFrom.blockId &&
+            conn.toBlockId === blockId &&
+            conn.fromSide === connectingFrom.side &&
+            conn.toSide === side) ||
+          (conn.fromBlockId === blockId &&
+            conn.toBlockId === connectingFrom.blockId &&
+            conn.fromSide === side &&
+            conn.toSide === connectingFrom.side),
+      );
+
+      if (existingConnection) {
+        setConnectingFrom(null);
+        return;
+      }
+
+      // Создаем новую связь
+      const newConnection: Connection = {
+        id: `conn-${Date.now()}`,
+        fromBlockId: connectingFrom.blockId,
+        toBlockId: blockId,
+        fromSide: connectingFrom.side,
+        toSide: side,
+      };
+
+      onAddConnection(newConnection);
+      setConnectingFrom(null);
+    }
+  };
+
+  // Функция для отрисовки линии между точками
+  const renderConnection = (conn: Connection) => {
+    const fromBlock = blocks.find((b) => b.id === conn.fromBlockId);
+    const toBlock = blocks.find((b) => b.id === conn.toBlockId);
+
+    if (!fromBlock || !toBlock) return null;
+
+    // Вычисляем координаты точек
+    const fromX = getConnectionPointX(fromBlock, conn.fromSide);
+    const fromY = getConnectionPointY(fromBlock);
+    const toX = getConnectionPointX(toBlock, conn.toSide);
+    const toY = getConnectionPointY(toBlock);
+
+    // Ломаная линия: сначала горизонтально, потом вертикально
+    const midX = (fromX + toX) / 2;
+    const pathData = `M ${fromX} ${fromY} L ${midX} ${fromY} L ${midX} ${toY} L ${toX} ${toY}`;
+
+    const isSelected = selectedConnectionId === conn.id;
 
     return (
-      <line
-        x1={fromCenterX}
-        y1={fromCenterY}
-        x2={toCenterX}
-        y2={toCenterY}
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeDasharray={dashArray}
-        opacity={0.8}
+      <g key={conn.id}>
+        {/* Невидимая толстая линия для клика */}
+        <path
+          d={pathData}
+          stroke="transparent"
+          strokeWidth={10}
+          fill="none"
+          style={{ cursor: "pointer", pointerEvents: "all" }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedConnectionId(conn.id);
+          }}
+        />
+        {/* Видимая линия */}
+        <path
+          d={pathData}
+          stroke={isSelected ? "#ffa500" : "#4ec9b0"}
+          strokeWidth={isSelected ? 3 : 2}
+          fill="none"
+          style={{ pointerEvents: "none" }}
+        />
+      </g>
+    );
+  };
+
+  // Функция для отрисовки временной линии во время создания связи
+  const renderTemporaryConnection = () => {
+    if (!connectingFrom) return null;
+
+    const fromBlock = blocks.find((b) => b.id === connectingFrom.blockId);
+    if (!fromBlock) return null;
+
+    const fromX = getConnectionPointX(fromBlock, connectingFrom.side);
+    const fromY = getConnectionPointY(fromBlock);
+    const midX = (fromX + mousePos.x) / 2;
+    const pathData = `M ${fromX} ${fromY} L ${midX} ${fromY} L ${midX} ${mousePos.y} L ${mousePos.x} ${mousePos.y}`;
+
+    return (
+      <path
+        d={pathData}
+        stroke="#4ec9b0"
+        strokeWidth={2}
+        strokeDasharray="5,5"
+        opacity={0.6}
+        fill="none"
       />
     );
   };
 
+  // Получить X координату точки соединения
+  const getConnectionPointX = (block: Block, side: "left" | "right") => {
+    if (side === "left") {
+      // Левая точка: минимум 1 клетка от границы блока
+      return (block.x - 1) * CELL_SIZE;
+    } else {
+      // Правая точка: минимум 1 клетка от границы блока
+      return (block.x + BLOCK_SIZE + 1) * CELL_SIZE;
+    }
+  };
+
+  // Получить Y координату точки соединения (вертикальный центр блока)
+  const getConnectionPointY = (block: Block) => {
+    return (block.y + BLOCK_SIZE / 2) * CELL_SIZE;
+  };
+
+  // Рендерим сетку линий
+  const renderGrid = () => {
+    const lines = [];
+    const gridWidth = 1200;
+    const gridHeight = 800;
+
+    for (let x = 0; x <= gridWidth; x += CELL_SIZE) {
+      lines.push(
+        <line
+          key={`v${x}`}
+          x1={x}
+          y1={0}
+          x2={x}
+          y2={gridHeight}
+          stroke="#3e3e42"
+          strokeWidth={1}
+        />,
+      );
+    }
+
+    for (let y = 0; y <= gridHeight; y += CELL_SIZE) {
+      lines.push(
+        <line
+          key={`h${y}`}
+          x1={0}
+          y1={y}
+          x2={gridWidth}
+          y2={y}
+          stroke="#3e3e42"
+          strokeWidth={1}
+        />,
+      );
+    }
+
+    return lines;
+  };
+
   return (
-    <div className="grid-canvas">
-      <div className="canvas-controls">
-        <button className="control-button" onClick={onAddBlock}>
-          ➕ Добавить блок
+    <div className="canvas-container">
+      <div className="canvas-toolbar">
+        <button onClick={onAddBlock}>Добавить блок (A)</button>
+        <button onClick={onDeleteBlock} disabled={!selectedBlockId}>
+          Удалить блок (Delete)
         </button>
         <button
-          className="control-button delete"
-          onClick={onDeleteBlock}
-          disabled={!selectedBlockId}
+          onClick={() => {
+            if (selectedConnectionId) {
+              onDeleteConnection(selectedConnectionId);
+              setSelectedConnectionId(null);
+            }
+          }}
+          disabled={!selectedConnectionId}
+          style={{ marginLeft: "auto" }}
         >
-          🗑️ Удалить
+          Удалить связь
         </button>
       </div>
-
-      <div className="grid-viewport">
-        <div
-          ref={gridRef}
-          className="grid-container"
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          onClick={handleCanvasClick}
+      <div
+        ref={gridRef}
+        className="grid-canvas"
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onClick={handleCanvasClick}
+      >
+        <svg
+          width="1200"
+          height="800"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            pointerEvents: "none",
+          }}
         >
-          {/* SVG слой для линий связи */}
-          <svg
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              pointerEvents: 'none',
-              zIndex: 1,
-            }}
-          >
-            {connections.map((conn, idx) => (
-              <g key={idx}>
-                {renderConnection(conn.from, conn.to, conn.type!)}
-              </g>
-            ))}
-          </svg>
+          {renderGrid()}
+          {connections.map((conn) => renderConnection(conn))}
+          {renderTemporaryConnection()}
+        </svg>
+        {blocks.map((block) => {
+          const pixelX = block.x * CELL_SIZE;
+          const pixelY = block.y * CELL_SIZE;
+          const pixelSize = BLOCK_SIZE * CELL_SIZE;
 
-          {/* Блоки */}
-          {blocks.map((block) => (
-            <div
-              key={block.id}
-              className={`grid-block ${selectedBlockId === block.id ? "selected" : ""} ${
-                draggingBlockId === block.id ? "dragging" : ""
-              }`}
-              style={{
-                left: block.x * CELL_SIZE,
-                top: block.y * CELL_SIZE,
-                width: BLOCK_SIZE * CELL_SIZE,
-                height: BLOCK_SIZE * CELL_SIZE,
-                backgroundColor: '#0e639c',
-                zIndex: 10,
-              }}
-              onMouseDown={(e) => handleMouseDown(e, block.id)}
-            >
-              <span className="block-label">
-                Блок #{block.id.split('-')[1].substring(0, 4)}
-              </span>
-              <span className="block-info">
-                R: {block.reliability.toFixed(2)}
-              </span>
+          const leftPointX = getConnectionPointX(block, "left");
+          const leftPointY = getConnectionPointY(block);
+          const rightPointX = getConnectionPointX(block, "right");
+          const rightPointY = getConnectionPointY(block);
+
+          return (
+            <div key={block.id}>
+              <div
+                className={`grid-block ${selectedBlockId === block.id ? "selected" : ""}`}
+                style={{
+                  left: `${pixelX}px`,
+                  top: `${pixelY}px`,
+                  width: `${pixelSize}px`,
+                  height: `${pixelSize}px`,
+                }}
+                onMouseDown={(e) => handleMouseDown(e, block.id)}
+              >
+                <div className="block-number">#{block.number}</div>
+                <div className="block-reliability">
+                  {block.reliability.toFixed(2)}
+                </div>
+              </div>
+              {/* Левая точка соединения */}
+              <div
+                className={`connection-point ${connectingFrom?.blockId === block.id && connectingFrom?.side === "left" ? "active" : ""}`}
+                style={{
+                  left: `${leftPointX - 6}px`,
+                  top: `${leftPointY - 6}px`,
+                }}
+                onClick={(e) => handleConnectionPointClick(e, block.id, "left")}
+              />
+              {/* Правая точка соединения */}
+              <div
+                className={`connection-point ${connectingFrom?.blockId === block.id && connectingFrom?.side === "right" ? "active" : ""}`}
+                style={{
+                  left: `${rightPointX - 6}px`,
+                  top: `${rightPointY - 6}px`,
+                }}
+                onClick={(e) =>
+                  handleConnectionPointClick(e, block.id, "right")
+                }
+              />
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
     </div>
   );
