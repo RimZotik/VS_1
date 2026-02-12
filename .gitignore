@@ -137,3 +137,27 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Tauri
+src-tauri/target
+src-tauri/Cargo.lock
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+# Build artifacts
+*.local
+dist-ssr
+*.exe
+*.app
+*.dmg
+*.deb
+*.rpm
+*.AppImage
+
+# macOS
+.AppleDouble
+.LSOverride
