@@ -1,5 +1,6 @@
 import React from "react";
 import { Block } from "../types";
+import { normalizeReliability, getConnectionType } from "../utils";
 
 interface LeftPanelProps {
   blocks: Block[];
@@ -16,17 +17,21 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
 }) => {
   const selectedBlock = blocks.find((b) => b.id === selectedBlockId);
 
-  const getModeLabel = (mode: string) => {
-    switch (mode) {
-      case "sequential":
-        return "Последовательно";
-      case "parallel":
-        return "Параллельно";
-      case "reserve":
-        return "Резерв";
-      default:
-        return mode;
-    }
+  const handleReliabilityChange = (blockId: string, value: string) => {
+    const normalized = normalizeReliability(value);
+    onUpdateBlock(blockId, { reliability: normalized });
+  };
+
+  const getBlockConnections = (block: Block) => {
+    const connections = blocks
+      .filter(b => b.id !== block.id)
+      .map(b => ({
+        block: b,
+        type: getConnectionType(block, b)
+      }))
+      .filter(c => c.type !== null);
+    
+    return connections;
   };
 
   return (
@@ -39,27 +44,31 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
           </p>
         ) : (
           <div className="block-list">
-            {blocks.map((block) => (
-              <div
-                key={block.id}
-                className={`block-item ${selectedBlockId === block.id ? "selected" : ""}`}
-                onClick={() => onSelectBlock(block.id)}
-              >
-                <div className="block-item-header">
-                  <span className="block-id">
-                    {block.id.replace("block-", "Блок #")}
-                  </span>
-                  <span className="block-mode">{getModeLabel(block.mode)}</span>
-                </div>
-                <div className="block-details">
-                  <div>Надежность: {block.reliability}</div>
-                  <div>Готовность: {block.readiness}</div>
-                  <div>
-                    Позиция: ({block.x}, {block.y})
+            {blocks.map((block) => {
+              const connections = getBlockConnections(block);
+              return (
+                <div
+                  key={block.id}
+                  className={`block-item ${selectedBlockId === block.id ? "selected" : ""}`}
+                  onClick={() => onSelectBlock(block.id)}
+                >
+                  <div className="block-item-header">
+                    <span className="block-id">
+                      Блок #{block.id.split('-')[1].substring(0, 4)}
+                    </span>
+                  </div>
+                  <div className="block-details">
+                    <div>Надежность: {block.reliability.toFixed(2)}</div>
+                    <div>Позиция: ({block.x}, {block.y})</div>
+                    {connections.length > 0 && (
+                      <div style={{ marginTop: '4px', fontSize: '11px', color: '#4ec9b0' }}>
+                        {connections.length} связ{connections.length === 1 ? 'ь' : 'и'}
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -68,55 +77,60 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
         <div className="panel-section">
           <h2>Свойства блока</h2>
           <div className="property-input">
-            <label>Режим работы:</label>
-            <select
-              value={selectedBlock.mode}
-              onChange={(e) =>
-                onUpdateBlock(selectedBlock.id, {
-                  mode: e.target.value as Block["mode"],
-                })
-              }
-            >
-              <option value="sequential">
-                Последовательно (связан с левым и правым)
-              </option>
-              <option value="parallel">
-                Параллельно (параллельно верхнему)
-              </option>
-              <option value="reserve">В резерве</option>
-            </select>
-          </div>
-
-          <div className="property-input">
-            <label>Надежность процессора:</label>
+            <label>Надежность процессора (0-1):</label>
             <input
-              type="number"
-              min="0"
-              max="1"
-              step="0.01"
+              type="text"
               value={selectedBlock.reliability}
-              onChange={(e) =>
-                onUpdateBlock(selectedBlock.id, {
-                  reliability: parseFloat(e.target.value),
-                })
-              }
+              onChange={(e) => handleReliabilityChange(selectedBlock.id, e.target.value)}
+              onBlur={(e) => {
+                // При потере фокуса нормализуем значение
+                const normalized = normalizeReliability(e.target.value);
+                onUpdateBlock(selectedBlock.id, { reliability: normalized });
+              }}
+              placeholder="0.95"
             />
           </div>
 
           <div className="property-input">
-            <label>Готовность процессора (P_np):</label>
-            <input
-              type="number"
-              min="0"
-              max="1"
-              step="0.01"
-              value={selectedBlock.readiness}
-              onChange={(e) =>
-                onUpdateBlock(selectedBlock.id, {
-                  readiness: parseFloat(e.target.value),
-                })
-              }
-            />
+            <label>Связи с другими блоками:</label>
+            <div style={{ fontSize: '13px', color: '#cccccc' }}>
+              {getBlockConnections(selectedBlock).map((conn, idx) => {
+                const typeLabel = 
+                  conn.type === 'sequential' ? 'Последовательно' :
+                  conn.type === 'parallel' ? 'Параллельно' :
+                  conn.type === 'reserve' ? 'Резерв' : '';
+                return (
+                  <div key={idx} style={{ 
+                    padding: '6px 8px', 
+                    background: '#2d2d30', 
+                    borderRadius: '4px', 
+                    marginBottom: '6px' 
+                  }}>
+                    {typeLabel} → Блок #{conn.block.id.split('-')[1].substring(0, 4)}
+                  </div>
+                );
+              })}
+              {getBlockConnections(selectedBlock).length === 0 && (
+                <div style={{ color: '#858585', fontStyle: 'italic' }}>
+                  Нет связей
+                </div>
+              )}
+            </div>
+            <div style={{ 
+              marginTop: '12px', 
+              padding: '10px', 
+              background: '#2d2d30', 
+              borderRadius: '4px',
+              fontSize: '12px',
+              color: '#858585'
+            }}>
+              <strong>Правила связей:</strong>
+              <ul style={{ marginTop: '6px', marginLeft: '16px' }}>
+                <li>Последовательно: на одном Y</li>
+                <li>Параллельно: через 1 клетку по Y</li>
+                <li>Резерв: через 2 клетки по Y</li>
+              </ul>
+            </div>
           </div>
         </div>
       )}

@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { Block } from "../types";
+import { findConnections } from "../utils";
 
 interface GridCanvasProps {
   blocks: Block[];
@@ -24,6 +25,8 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
   const [draggingBlockId, setDraggingBlockId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const gridRef = useRef<HTMLDivElement>(null);
+
+  const connections = findConnections(blocks);
 
   const handleMouseDown = (e: React.MouseEvent, blockId: string) => {
     e.stopPropagation();
@@ -69,30 +72,36 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
     }
   };
 
-  const getModeColor = (mode: string) => {
-    switch (mode) {
-      case "sequential":
-        return "#0e639c";
-      case "parallel":
-        return "#8e44ad";
-      case "reserve":
-        return "#d68910";
-      default:
-        return "#0e639c";
-    }
-  };
+  // Функция для отрисовки линии между двумя блоками
+  const renderConnection = (from: Block, to: Block, type: string) => {
+    // Центр блока = позиция + половина размера блока
+    const fromCenterX = (from.x + BLOCK_SIZE / 2) * CELL_SIZE;
+    const fromCenterY = (from.y + BLOCK_SIZE / 2) * CELL_SIZE;
+    const toCenterX = (to.x + BLOCK_SIZE / 2) * CELL_SIZE;
+    const toCenterY = (to.y + BLOCK_SIZE / 2) * CELL_SIZE;
 
-  const getModeBadge = (mode: string) => {
-    switch (mode) {
-      case "sequential":
-        return "ПОС";
-      case "parallel":
-        return "ПАР";
-      case "reserve":
-        return "РЕЗ";
-      default:
-        return "";
-    }
+    const color = 
+      type === 'sequential' ? '#4ec9b0' :
+      type === 'parallel' ? '#9b59b6' :
+      type === 'reserve' ? '#f39c12' : '#666';
+
+    const strokeWidth = type === 'sequential' ? 3 : 2;
+    const dashArray = 
+      type === 'parallel' ? '5,5' :
+      type === 'reserve' ? '2,4' : 'none';
+
+    return (
+      <line
+        x1={fromCenterX}
+        y1={fromCenterY}
+        x2={toCenterX}
+        y2={toCenterY}
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeDasharray={dashArray}
+        opacity={0.8}
+      />
+    );
   };
 
   return (
@@ -119,6 +128,26 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
           onMouseLeave={handleMouseUp}
           onClick={handleCanvasClick}
         >
+          {/* SVG слой для линий связи */}
+          <svg
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              pointerEvents: 'none',
+              zIndex: 1,
+            }}
+          >
+            {connections.map((conn, idx) => (
+              <g key={idx}>
+                {renderConnection(conn.from, conn.to, conn.type!)}
+              </g>
+            ))}
+          </svg>
+
+          {/* Блоки */}
           {blocks.map((block) => (
             <div
               key={block.id}
@@ -130,16 +159,16 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
                 top: block.y * CELL_SIZE,
                 width: BLOCK_SIZE * CELL_SIZE,
                 height: BLOCK_SIZE * CELL_SIZE,
-                backgroundColor: getModeColor(block.mode),
+                backgroundColor: '#0e639c',
+                zIndex: 10,
               }}
               onMouseDown={(e) => handleMouseDown(e, block.id)}
             >
-              <span className="mode-badge">{getModeBadge(block.mode)}</span>
               <span className="block-label">
-                {block.id.replace("block-", "Блок #").substring(0, 15)}
+                Блок #{block.id.split('-')[1].substring(0, 4)}
               </span>
               <span className="block-info">
-                R: {block.reliability} / P: {block.readiness}
+                R: {block.reliability.toFixed(2)}
               </span>
             </div>
           ))}

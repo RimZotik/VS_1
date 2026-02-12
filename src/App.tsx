@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import LeftPanel from './components/LeftPanel';
 import GridCanvas from './components/GridCanvas';
 import { Block } from './types';
@@ -12,9 +12,7 @@ function App() {
       id: `block-${Date.now()}`,
       x: 0,
       y: 0,
-      mode: 'sequential',
       reliability: 0.95,
-      readiness: 0.98,
     };
     setBlocks([...blocks, newBlock]);
   };

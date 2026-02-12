@@ -4,9 +4,15 @@ export interface Block {
   id: string;
   x: number;
   y: number;
-  mode: "sequential" | "parallel" | "reserve";
   reliability: number;
-  readiness: number;
+}
+
+export type ConnectionType = 'sequential' | 'parallel' | 'reserve' | null;
+
+export interface Connection {
+  from: string;
+  to: string;
+  type: ConnectionType;
 }
 
 export interface SystemCalculations {
