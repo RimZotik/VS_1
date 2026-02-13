@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { Block, Connection } from "../types";
+import { isBlockConnected } from "../calculations";
 
 interface GridCanvasProps {
   blocks: Block[];
@@ -162,15 +163,20 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
 
     if (!fromBlock || !toBlock) return null;
 
-    // Вычисляем координаты точек
-    const fromX = getConnectionPointX(fromBlock, conn.fromSide);
-    const fromY = getConnectionPointY(fromBlock);
-    const toX = getConnectionPointX(toBlock, conn.toSide);
-    const toY = getConnectionPointY(toBlock);
+    // Вычисляем координаты на границах блоков (не точек)
+    const fromEdgeX = getBlockEdgeX(fromBlock, conn.fromSide);
+    const fromEdgeY = getConnectionPointY(fromBlock);
+    const toEdgeX = getBlockEdgeX(toBlock, conn.toSide);
+    const toEdgeY = getConnectionPointY(toBlock);
 
-    // Ломаная линия: сначала горизонтально, потом вертикально
-    const midX = (fromX + toX) / 2;
-    const pathData = `M ${fromX} ${fromY} L ${midX} ${fromY} L ${midX} ${toY} L ${toX} ${toY}`;
+    // Отступ 1 клетка в сторону от границы блока
+    const fromOffsetX =
+      conn.fromSide === "left" ? fromEdgeX - CELL_SIZE : fromEdgeX + CELL_SIZE;
+    const toOffsetX =
+      conn.toSide === "left" ? toEdgeX - CELL_SIZE : toEdgeX + CELL_SIZE;
+
+    // Ломаная линия: от границы блока -> 1 клетка в бок -> вертикально -> 1 клетка в бок -> до границы блока
+    const pathData = `M ${fromEdgeX} ${fromEdgeY} L ${fromOffsetX} ${fromEdgeY} L ${fromOffsetX} ${toEdgeY} L ${toOffsetX} ${toEdgeY} L ${toEdgeX} ${toEdgeY}`;
 
     const isSelected = selectedConnectionId === conn.id;
 
@@ -207,10 +213,13 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
     const fromBlock = blocks.find((b) => b.id === connectingFrom.blockId);
     if (!fromBlock) return null;
 
-    const fromX = getConnectionPointX(fromBlock, connectingFrom.side);
-    const fromY = getConnectionPointY(fromBlock);
-    const midX = (fromX + mousePos.x) / 2;
-    const pathData = `M ${fromX} ${fromY} L ${midX} ${fromY} L ${midX} ${mousePos.y} L ${mousePos.x} ${mousePos.y}`;
+    const fromEdgeX = getBlockEdgeX(fromBlock, connectingFrom.side);
+    const fromEdgeY = getConnectionPointY(fromBlock);
+    const fromOffsetX =
+      connectingFrom.side === "left"
+        ? fromEdgeX - CELL_SIZE
+        : fromEdgeX + CELL_SIZE;
+    const pathData = `M ${fromEdgeX} ${fromEdgeY} L ${fromOffsetX} ${fromEdgeY} L ${fromOffsetX} ${mousePos.y} L ${mousePos.x} ${mousePos.y}`;
 
     return (
       <path
@@ -224,7 +233,7 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
     );
   };
 
-  // Получить X координату точки соединения
+  // Получить X координату точки соединения (для отображения точки)
   const getConnectionPointX = (block: Block, side: "left" | "right") => {
     if (side === "left") {
       // Левая точка: минимум 1 клетка от границы блока
@@ -232,6 +241,17 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
     } else {
       // Правая точка: минимум 1 клетка от границы блока
       return (block.x + BLOCK_SIZE + 1) * CELL_SIZE;
+    }
+  };
+
+  // Получить X координату границы блока (для линий)
+  const getBlockEdgeX = (block: Block, side: "left" | "right") => {
+    if (side === "left") {
+      // Левая граница блока
+      return block.x * CELL_SIZE;
+    } else {
+      // Правая граница блока
+      return (block.x + BLOCK_SIZE) * CELL_SIZE;
     }
   };
 
@@ -328,10 +348,18 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
           const rightPointX = getConnectionPointX(block, "right");
           const rightPointY = getConnectionPointY(block);
 
+          const isConnected = isBlockConnected(
+            block.id,
+            blocks,
+            connections,
+            block.isReserve || false,
+          );
+          const blockClass = `grid-block ${selectedBlockId === block.id ? "selected" : ""} ${block.isReserve ? "reserve" : ""} ${!isConnected ? "disconnected" : ""}`;
+
           return (
             <div key={block.id}>
               <div
-                className={`grid-block ${selectedBlockId === block.id ? "selected" : ""}`}
+                className={blockClass}
                 style={{
                   left: `${pixelX}px`,
                   top: `${pixelY}px`,

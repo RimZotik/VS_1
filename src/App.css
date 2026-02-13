@@ -256,6 +256,29 @@ body {
   box-shadow: 0 0 20px rgba(78, 201, 176, 0.4);
 }
 
+.grid-block.reserve {
+  background-color: #4a2a3a;
+  border-color: #ff69b4;
+}
+
+.grid-block.reserve.selected {
+  border-color: #4ec9b0;
+  background-color: #5a1a3a;
+  box-shadow: 0 0 20px rgba(255, 105, 180, 0.5);
+}
+
+.grid-block.disconnected {
+  background-color: #3a3a3a;
+  border-color: #5a5a5a;
+  opacity: 0.6;
+}
+
+.grid-block.disconnected.selected {
+  border-color: #007acc;
+  background-color: #4a4a4a;
+  opacity: 0.8;
+}
+
 .grid-block.dragging {
   opacity: 0.7;
   z-index: 100;

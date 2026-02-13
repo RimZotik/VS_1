@@ -1,17 +1,22 @@
 import { useState, useEffect } from "react";
 import LeftPanel from "./components/LeftPanel";
-import GridCanvas from "./components/GridCanvas";
+import GridCanvas from "./components/GridCanvas.tsx";
 import { Block, Connection } from "./types";
 
 function App() {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
-  const [nextBlockNumber, setNextBlockNumber] = useState(1);
 
   // Обработка клавиш
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Не обрабатываем клавиши если фокус в input или textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") {
+        return;
+      }
+
       if (e.key === "a" || e.key === "A" || e.key === "ф" || e.key === "Ф") {
         addBlock();
       } else if (e.key === "Delete" || e.key === "Backspace") {
@@ -23,18 +28,21 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedBlockId, nextBlockNumber]);
+  }, [selectedBlockId]);
 
   const addBlock = () => {
+    // Находим максимальный номер среди существующих блоков
+    const maxNumber =
+      blocks.length > 0 ? Math.max(...blocks.map((b) => b.number)) : 0;
+
     const newBlock: Block = {
       id: `block-${Date.now()}`,
-      number: nextBlockNumber,
+      number: maxNumber + 1,
       x: 0,
       y: 0,
       reliability: 0.95,
     };
     setBlocks([...blocks, newBlock]);
-    setNextBlockNumber(nextBlockNumber + 1);
   };
 
   const deleteSelectedBlock = () => {

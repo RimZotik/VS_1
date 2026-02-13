@@ -6,6 +6,7 @@ export interface Block {
   x: number;
   y: number;
   reliability: number;
+  isReserve?: boolean;
 }
 
 export interface Connection {
