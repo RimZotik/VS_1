@@ -25,6 +25,10 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
 }) => {
   const selectedBlock = blocks.find((b) => b.id === selectedBlockId);
 
+  const formatReliability = (value: number): string => {
+    return value.toFixed(6).replace(/\.?0+$/, "");
+  };
+
   // Рассчитываем надежность системы
   const systemStats = useMemo(() => {
     if (blocks.length === 0) {
@@ -80,9 +84,7 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
               className="info-value"
               style={{ fontSize: "18px", color: "#4ec9b0" }}
             >
-              {systemStats
-                ? (systemStats.systemReliability * 100).toFixed(2) + "%"
-                : "-"}
+              {systemStats ? systemStats.systemReliability.toFixed(6) : "-"}
             </span>
           </div>
         </div>
@@ -178,7 +180,7 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
               >
                 <span className="block-number-label">#{block.number}</span>
                 <span className="block-reliability-value">
-                  {block.reliability.toFixed(2)}
+                  {formatReliability(block.reliability)}
                 </span>
               </div>
             ))}
@@ -192,9 +194,11 @@ const LeftPanel: React.FC<LeftPanelProps> = ({
           <h2>Редактирование блока #{selectedBlock.number}</h2>
           <div className="property-input">
             <label>Надежность (0-1):</label>
-            <input
-              type="text"
+            <textarea
+              className="reliability-input"
               value={selectedBlock.reliability}
+              rows={3}
+              wrap="off"
               onChange={(e) =>
                 handleReliabilityChange(selectedBlock.id, e.target.value)
               }

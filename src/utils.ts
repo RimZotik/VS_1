@@ -3,8 +3,10 @@
  */
 export function normalizeReliability(value: string | number): number {
   if (typeof value === "string") {
-    // Удаляем все нецифровые символы кроме точки
-    const cleaned = value.replace(/[^\d.]/g, "");
+    // Поддерживаем точку и запятую как разделитель дробной части
+    const withDot = value.replace(",", ".");
+    // Оставляем только цифры и точку
+    const cleaned = withDot.replace(/[^\d.]/g, "");
     const parsed = parseFloat(cleaned);
     if (isNaN(parsed)) return 0.95;
     return Math.max(0, Math.min(1, parsed));

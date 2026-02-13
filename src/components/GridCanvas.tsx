@@ -206,6 +206,10 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
     );
   };
 
+  const formatReliability = (value: number): string => {
+    return value.toFixed(6).replace(/\.?0+$/, "");
+  };
+
   // Функция для отрисовки временной линии во время создания связи
   const renderTemporaryConnection = () => {
     if (!connectingFrom) return null;
@@ -370,7 +374,7 @@ const GridCanvas: React.FC<GridCanvasProps> = ({
               >
                 <div className="block-number">#{block.number}</div>
                 <div className="block-reliability">
-                  {block.reliability.toFixed(2)}
+                  {formatReliability(block.reliability)}
                 </div>
               </div>
               {/* Левая точка соединения */}

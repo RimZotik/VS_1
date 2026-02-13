@@ -106,17 +106,35 @@ body {
 }
 
 .property-input input,
-.property-input select {
+.property-input select,
+.property-input textarea {
   padding: 8px;
   background-color: #3c3c3c;
   border: 1px solid #3e3e42;
   border-radius: 4px;
   color: #e0e0e0;
   font-size: 14px;
+  width: 100%;
+}
+
+.property-input .reliability-input {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  min-height: 76px;
+  padding: 12px;
+  font-size: 16px;
+  line-height: 1.4;
+  resize: vertical;
+  overflow-x: auto;
+  overflow-y: auto;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .property-input input:focus,
-.property-input select:focus {
+.property-input select:focus,
+.property-input textarea:focus {
   outline: none;
   border-color: #007acc;
 }
@@ -295,11 +313,15 @@ body {
 }
 
 .block-reliability {
-  font-size: 28px;
+  max-width: calc(100% - 8px);
+  font-size: 18px;
   font-weight: 700;
   color: white;
   text-align: center;
   line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   user-select: none;
   pointer-events: none;
 }
