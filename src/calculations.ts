@@ -166,7 +166,141 @@ function analyzeComponent(
   groups: string[][];
   orderedGroups: string[][];
   reliability: number;
+  mode: "groups" | "parallel-paths";
+  parallelPaths: string[][];
 } {
+  function isSameSideConnection(
+    conn: Connection,
+    side: "left" | "right",
+  ): boolean {
+    return conn.fromSide === side && conn.toSide === side;
+  }
+
+  function areBlocksBusConnected(
+    ids: string[],
+    side: "left" | "right",
+  ): boolean {
+    if (ids.length <= 1) return true;
+
+    const set = new Set(ids);
+    const adj = new Map<string, Set<string>>();
+    ids.forEach((id) => adj.set(id, new Set()));
+
+    connections.forEach((conn) => {
+      if (!isSameSideConnection(conn, side)) return;
+      if (!set.has(conn.fromBlockId) || !set.has(conn.toBlockId)) return;
+      adj.get(conn.fromBlockId)?.add(conn.toBlockId);
+      adj.get(conn.toBlockId)?.add(conn.fromBlockId);
+    });
+
+    const visitedBus = new Set<string>();
+    const stack = [ids[0]];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (visitedBus.has(cur)) continue;
+      visitedBus.add(cur);
+      (adj.get(cur) || new Set<string>()).forEach((n) => {
+        if (!visitedBus.has(n)) stack.push(n);
+      });
+    }
+
+    return visitedBus.size === ids.length;
+  }
+
+  // 0) Спец-случай: несколько последовательных веток, включенных параллельно между общей левой и правой шинами.
+  // Пример: (1->2) || (3->4)
+  const inDegree = new Map<string, number>();
+  const outDegree = new Map<string, number>();
+  const componentSet = new Set(component);
+  component.forEach((id) => {
+    inDegree.set(id, 0);
+    outDegree.set(id, 0);
+  });
+
+  component.forEach((fromId) => {
+    const out = graph.adjacency.get(fromId) || [];
+    out.forEach(({ toId }) => {
+      if (!componentSet.has(toId)) return;
+      outDegree.set(fromId, (outDegree.get(fromId) || 0) + 1);
+      inDegree.set(toId, (inDegree.get(toId) || 0) + 1);
+    });
+  });
+
+  const entryBlocks = component.filter((id) => (inDegree.get(id) || 0) === 0);
+  const exitBlocks = component.filter((id) => (outDegree.get(id) || 0) === 0);
+
+  const hasEntryBus =
+    entryBlocks.length > 1 && areBlocksBusConnected(entryBlocks, "left");
+  const hasExitBus =
+    exitBlocks.length > 1 && areBlocksBusConnected(exitBlocks, "right");
+
+  if (hasEntryBus && hasExitBus) {
+    const paths: string[][] = [];
+
+    const dfsPath = (current: string, target: string, path: string[]) => {
+      if (path.includes(current)) return;
+
+      const nextPath = [...path, current];
+      if (current === target) {
+        paths.push(nextPath);
+        return;
+      }
+
+      const out = graph.adjacency.get(current) || [];
+      out.forEach(({ toId }) => {
+        if (!componentSet.has(toId)) return;
+        dfsPath(toId, target, nextPath);
+      });
+    };
+
+    entryBlocks.forEach((startId) => {
+      exitBlocks.forEach((endId) => {
+        dfsPath(startId, endId, []);
+      });
+    });
+
+    const uniquePathMap = new Map<string, string[]>();
+    paths.forEach((p) => {
+      uniquePathMap.set(p.join("->"), p);
+    });
+    const uniquePaths = [...uniquePathMap.values()];
+
+    // Берем только пути, которые не содержат другие (защита от лишних обходов), и считаем параллелью,
+    // если они попарно не пересекаются по блокам.
+    const disjoint = uniquePaths.every((p, i) =>
+      uniquePaths.every((q, j) => {
+        if (i >= j) return true;
+        return p.every((id) => !q.includes(id));
+      }),
+    );
+
+    if (uniquePaths.length >= 2 && disjoint) {
+      const branchReliabilities = uniquePaths.map((path) =>
+        roundTo(
+          path.reduce((acc, id) => {
+            const block = graph.blocks.get(id);
+            return acc * (block?.reliability || 0);
+          }, 1),
+        ),
+      );
+
+      const reliability = roundTo(
+        1 -
+          branchReliabilities.reduce((acc, r) => {
+            return acc * (1 - r);
+          }, 1),
+      );
+
+      return {
+        groups: uniquePaths,
+        orderedGroups: uniquePaths,
+        reliability,
+        mode: "parallel-paths",
+        parallelPaths: uniquePaths,
+      };
+    }
+  }
+
   // 1) Находим параллельные группы:
   // два блока принадлежат одной группе, если между ними есть И left-to-left, И right-to-right связь.
   const parallelAdj = new Map<string, Set<string>>();
@@ -290,6 +424,8 @@ function analyzeComponent(
     groups,
     orderedGroups,
     reliability: roundTo(reliability),
+    mode: "groups",
+    parallelPaths: [],
   };
 }
 
@@ -569,6 +705,37 @@ export function generateReliabilityFormula(
     const componentFormulas = components.map((component) => {
       const analysis = analyzeComponent(component, graph, connections);
 
+      if (analysis.mode === "parallel-paths") {
+        const branchGeneralTerms = analysis.parallelPaths
+          .map((path) => {
+            const seq = path
+              .map((id) => {
+                const block = graph.blocks.get(id)!;
+                return `p<sub>${block.number}</sub>`;
+              })
+              .join(" × ");
+            return `(1 - (${seq}))`;
+          })
+          .join(" × ");
+
+        const branchValueTerms = analysis.parallelPaths
+          .map((path) => {
+            const seq = path
+              .map((id) => {
+                const block = graph.blocks.get(id)!;
+                return `${formatTo(block.reliability)}`;
+              })
+              .join(" × ");
+            return `(1 - (${seq}))`;
+          })
+          .join(" × ");
+
+        return {
+          generalPart: `[1 - ${branchGeneralTerms}]`,
+          valuesPart: `[1 - ${branchValueTerms}]`,
+        };
+      }
+
       const generalPart = analysis.orderedGroups
         .map((group) => {
           if (group.length === 1) {
@@ -770,12 +937,16 @@ export function calculateSystemReliability(
     details: {
       chains: chainDetails,
       parallelGroups: componentAnalyses.flatMap((analysis) =>
-        analysis.groups
-          .filter((group) => group.length > 1)
-          .map((group) => ({
-            blocks: group,
-            reliability: roundTo(calculateParallelReliability(group, graph)),
-          })),
+        analysis.mode === "parallel-paths"
+          ? []
+          : analysis.groups
+              .filter((group) => group.length > 1)
+              .map((group) => ({
+                blocks: group,
+                reliability: roundTo(
+                  calculateParallelReliability(group, graph),
+                ),
+              })),
       ),
     },
   };
