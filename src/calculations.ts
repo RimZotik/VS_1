@@ -166,9 +166,219 @@ function analyzeComponent(
   groups: string[][];
   orderedGroups: string[][];
   reliability: number;
-  mode: "groups" | "parallel-paths";
+  mode: "groups" | "parallel-paths" | "reduced-sp";
   parallelPaths: string[][];
+  reducedGeneral: string | null;
+  reducedValues: string | null;
 } {
+  type SpEdge = {
+    from: string;
+    to: string;
+    reliability: number;
+    generalExpr: string;
+    valueExpr: string;
+  };
+
+  // 0) Универсальная попытка свести компонент к series-parallel сети через шины.
+  // Идея: объединяем эквипотенциальные точки (left-left, right-right, output-input),
+  // затем редуцируем граф блоков правилами параллели и последовательности.
+  const componentSet = new Set(component);
+
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    if (!parent.has(x)) parent.set(x, x);
+    const p = parent.get(x)!;
+    if (p === x) return x;
+    const root = find(p);
+    parent.set(x, root);
+    return root;
+  };
+  const union = (a: string, b: string) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+
+  const leftNode = (id: string) => `L:${id}`;
+  const rightNode = (id: string) => `R:${id}`;
+
+  component.forEach((id) => {
+    find(leftNode(id));
+    find(rightNode(id));
+  });
+
+  connections.forEach((conn) => {
+    if (
+      !componentSet.has(conn.fromBlockId) ||
+      !componentSet.has(conn.toBlockId)
+    ) {
+      return;
+    }
+
+    // same-side bus connections
+    if (conn.fromSide === "left" && conn.toSide === "left") {
+      union(leftNode(conn.fromBlockId), leftNode(conn.toBlockId));
+      return;
+    }
+    if (conn.fromSide === "right" && conn.toSide === "right") {
+      union(rightNode(conn.fromBlockId), rightNode(conn.toBlockId));
+      return;
+    }
+
+    // valid output-input connection => общая точка соединения
+    if (conn.fromSide === "right" && conn.toSide === "left") {
+      union(rightNode(conn.fromBlockId), leftNode(conn.toBlockId));
+      return;
+    }
+    if (conn.fromSide === "left" && conn.toSide === "right") {
+      union(rightNode(conn.toBlockId), leftNode(conn.fromBlockId));
+    }
+  });
+
+  let spEdges: SpEdge[] = component
+    .map((id) => {
+      const block = graph.blocks.get(id)!;
+      return {
+        from: find(leftNode(id)),
+        to: find(rightNode(id)),
+        reliability: roundTo(block.reliability),
+        generalExpr: `p<sub>${block.number}</sub>`,
+        valueExpr: `${formatTo(block.reliability)}`,
+      };
+    })
+    .filter((e) => e.from !== e.to);
+
+  const reduceParallel = (
+    edges: SpEdge[],
+  ): { edges: SpEdge[]; changed: boolean } => {
+    const buckets = new Map<string, SpEdge[]>();
+    edges.forEach((e) => {
+      const key = `${e.from}->${e.to}`;
+      const list = buckets.get(key) || [];
+      list.push(e);
+      buckets.set(key, list);
+    });
+
+    let changed = false;
+    const result: SpEdge[] = [];
+    buckets.forEach((list) => {
+      if (list.length === 1) {
+        result.push(list[0]);
+        return;
+      }
+
+      changed = true;
+      const unreliability = list.reduce(
+        (acc, e) => acc * (1 - e.reliability),
+        1,
+      );
+      const reliability = roundTo(1 - unreliability);
+
+      const generalExpr = `[1 - ${list
+        .map((e) => `(1 - ${e.generalExpr})`)
+        .join(" × ")}]`;
+      const valueExpr = `[1 - ${list
+        .map((e) => `(1 - ${e.valueExpr})`)
+        .join(" × ")}]`;
+
+      result.push({
+        from: list[0].from,
+        to: list[0].to,
+        reliability,
+        generalExpr,
+        valueExpr,
+      });
+    });
+
+    return { edges: result, changed };
+  };
+
+  const reduceSeries = (
+    edges: SpEdge[],
+  ): { edges: SpEdge[]; changed: boolean } => {
+    const inMap = new Map<string, SpEdge[]>();
+    const outMap = new Map<string, SpEdge[]>();
+    const nodes = new Set<string>();
+
+    edges.forEach((e) => {
+      nodes.add(e.from);
+      nodes.add(e.to);
+
+      const inList = inMap.get(e.to) || [];
+      inList.push(e);
+      inMap.set(e.to, inList);
+
+      const outList = outMap.get(e.from) || [];
+      outList.push(e);
+      outMap.set(e.from, outList);
+    });
+
+    const sourceNodes = [...nodes].filter(
+      (n) => (inMap.get(n)?.length || 0) === 0,
+    );
+    const sinkNodes = [...nodes].filter(
+      (n) => (outMap.get(n)?.length || 0) === 0,
+    );
+    const sourceSet = new Set(sourceNodes);
+    const sinkSet = new Set(sinkNodes);
+
+    for (const node of nodes) {
+      if (sourceSet.has(node) || sinkSet.has(node)) continue;
+
+      const ins = inMap.get(node) || [];
+      const outs = outMap.get(node) || [];
+      if (ins.length !== 1 || outs.length !== 1) continue;
+
+      const inEdge = ins[0];
+      const outEdge = outs[0];
+      if (inEdge === outEdge) continue;
+
+      const nextEdges = edges.filter((e) => e !== inEdge && e !== outEdge);
+      nextEdges.push({
+        from: inEdge.from,
+        to: outEdge.to,
+        reliability: roundTo(inEdge.reliability * outEdge.reliability),
+        generalExpr: `${inEdge.generalExpr} × ${outEdge.generalExpr}`,
+        valueExpr: `${inEdge.valueExpr} × ${outEdge.valueExpr}`,
+      });
+
+      return { edges: nextEdges, changed: true };
+    }
+
+    return { edges, changed: false };
+  };
+
+  if (spEdges.length > 0) {
+    let changed = true;
+    let safety = 0;
+
+    while (changed && safety < 200) {
+      safety += 1;
+      changed = false;
+
+      const p = reduceParallel(spEdges);
+      spEdges = p.edges;
+      changed = changed || p.changed;
+
+      const s = reduceSeries(spEdges);
+      spEdges = s.edges;
+      changed = changed || s.changed;
+    }
+
+    if (spEdges.length === 1) {
+      const e = spEdges[0];
+      return {
+        groups: [],
+        orderedGroups: [],
+        reliability: roundTo(e.reliability),
+        mode: "reduced-sp",
+        parallelPaths: [],
+        reducedGeneral: e.generalExpr,
+        reducedValues: e.valueExpr,
+      };
+    }
+  }
+
   function isSameSideConnection(
     conn: Connection,
     side: "left" | "right",
@@ -211,7 +421,7 @@ function analyzeComponent(
   // Пример: (1->2) || (3->4)
   const inDegree = new Map<string, number>();
   const outDegree = new Map<string, number>();
-  const componentSet = new Set(component);
+  const componentSetLegacy = new Set(component);
   component.forEach((id) => {
     inDegree.set(id, 0);
     outDegree.set(id, 0);
@@ -248,7 +458,7 @@ function analyzeComponent(
 
       const out = graph.adjacency.get(current) || [];
       out.forEach(({ toId }) => {
-        if (!componentSet.has(toId)) return;
+        if (!componentSetLegacy.has(toId)) return;
         dfsPath(toId, target, nextPath);
       });
     };
@@ -297,6 +507,8 @@ function analyzeComponent(
         reliability,
         mode: "parallel-paths",
         parallelPaths: uniquePaths,
+        reducedGeneral: null,
+        reducedValues: null,
       };
     }
   }
@@ -426,6 +638,8 @@ function analyzeComponent(
     reliability: roundTo(reliability),
     mode: "groups",
     parallelPaths: [],
+    reducedGeneral: null,
+    reducedValues: null,
   };
 }
 
@@ -704,6 +918,13 @@ export function generateReliabilityFormula(
   if (components.length > 0) {
     const componentFormulas = components.map((component) => {
       const analysis = analyzeComponent(component, graph, connections);
+
+      if (analysis.mode === "reduced-sp") {
+        return {
+          generalPart: analysis.reducedGeneral || "0",
+          valuesPart: analysis.reducedValues || "0",
+        };
+      }
 
       if (analysis.mode === "parallel-paths") {
         const branchGeneralTerms = analysis.parallelPaths
